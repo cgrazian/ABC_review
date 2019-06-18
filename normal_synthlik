@@ -1,0 +1,107 @@
+##########################################
+##########################################
+### Simulation-generator likelihoods
+### code by C. Grazian
+##########################################
+##########################################
+
+### 1
+### Normal Simulator
+
+NormalSimulator <- function(n,theta,sigma=1)
+{
+	ysim <- rnorm(n,theta,sigma)
+}
+
+#### 2
+#### Synthetic likelihood for the normal model
+
+loglike <- function(data,theta,sigma=1)
+{
+	loglike	<- sum(dnorm(data,theta,sigma,log=T))
+	return(loglike)
+}
+
+normal_data <- read.csv("normal_data.csv",header=F)
+normal_data <- t(normal_data)
+dim(normal_data)
+head(normal_data)
+
+theta_grid <- seq(-20,20,length=500)
+loglike_grid <- apply(cbind(theta_grid),1,loglike,data=normal_data)
+
+# Summary statistics
+
+summaryfun = function(output)
+{
+	mu_hat <- mean(output)	
+	return(mu_hat)
+}
+
+s = summaryfun(normal_data)
+s
+
+applysummaries <- function(output)
+{
+	if(is.list(output)){
+		out <- lapply(output,summaryfun)
+	}else{
+		out = apply(output,1,summaryfun)
+	}
+  return(out)
+}
+
+# Number of data sets to consider for the synthetic log likelihood
+
+k=200
+
+synthloglike <- function(k,theta,s,n)
+{
+	oout <- lapply(rep(list(n),k),NormalSimulator,theta=theta)
+	summ <- matrix(unlist(applysummaries(oout)),ncol=1,byrow=T)
+	muhat <- apply(summ,2,mean)
+	Sigmahat <- cov(summ)
+	return( log(dmvnorm(s,mean=muhat,sigma=Sigmahat)  ))
+}
+
+sloglike=rep(NA,length(theta_grid))
+
+library(mvtnorm)
+
+a <- 1
+for(index in a:length(theta_grid))
+{
+	sloglike[index] <- synthloglike(k,theta_grid[index],s,nrow(normal_data))
+}
+
+# Simulation
+
+sim_synth <- matrix(NA,ncol=1,nrow=1000)
+for(i in 1:1000)
+{
+	sim_synth[i] <- sample(theta_grid,size=1,prob=exp(sloglike))
+}
+sim_synth = data.frame(sim_synth)
+
+# Load samples produces by the normal_example.ipynb file
+normal_ABC <- read.csv("normal_standardABC.csv",header=F)
+head(normal_ABC)
+
+normal_bolfi <- read.csv("normal_BOLFI.csv",header=F)
+head(normal_bolfi)
+
+library(ggplot2)
+
+colnames(sim_synth)[1] = "V1"
+sim_synth$method = "synth"
+normal_ABC$method = "ABC"
+normal_bolfi$method = "BOLFI"
+
+post_normal = rbind(sim_synth,normal_ABC,normal_bolfi[1:1000,])
+colnames(post_normal)[1] = "theta"
+
+ggplot(post_normal, aes(theta,fill=method)) +
+	geom_histogram(alpha=0.5,aes(y=..density..), position = 'identity') + 
+	labs(y = expression(pi[y](theta))) +
+	labs(x = expression(theta)) +
+	stat_function(fun=dnorm,args=list(mean=s,sd=sqrt(1/nrow(normal_data))),color="darkred")
