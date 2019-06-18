@@ -1,0 +1,138 @@
+#### 1
+#### Simulations from the Ricker model
+
+library(mvtnorm)
+
+ricker = function(N0,theta,timestep = 50){
+  r      = theta[1]
+  phi    = theta[2]
+  sigma2 = theta[3]
+  Nt = rep(N0,timestep)
+  et = rep(0,timestep)
+  Y = rep(NA,timestep)
+  for(timer in 2:timestep){
+    et[timer] = rnorm(n=1,0,sd = sqrt(sigma2))
+    Nt[timer] =r*Nt[timer-1]*exp(-Nt[timer-1]+et[timer])
+    Y[timer]  = rpois(n=1,phi*Nt[timer])
+  }
+  return(list(y=Y,x=1:timestep,Nt=Nt,et=et,theta=theta))
+}
+
+theta = c(exp(3.8),10,.3^2)
+names(theta)=c("r","phi","sigma2")
+N0 = 25
+timestep = 50
+
+# Load the data already generated and available in the file "ricker_data.csv"
+
+ricker_data <- read.csv("ricker_data.csv",header=F)
+ricker_data <- t(ricker_data)
+dim(ricker_data)
+head(ricker_data)
+
+data <- list()
+data$y <- as.vector(ricker_data[,1])
+data$x <- 1:timestep
+data$theta <- c(exp(3.8),10,0.3^2)
+
+#### 2
+#### Synthetic likelihood for the Ricker model
+
+##### Consider the likelihood and plot it vs r
+
+loglike = function(data,theta,N0,timestep=50){
+  oout = ricker(N0,theta=theta,timestep = timestep)
+  phi    = theta[2]
+  loglike  = dpois(data,phi*oout$Nt,log=T)
+}
+
+logr=seq(3,5,length=51)
+data = ricker(N0,theta=theta,timestep = timestep)
+logliketemp = apply(cbind(exp(logr),theta[2],theta[3]),1,
+                    loglike,data=data$y,N0=N0,timestep=timestep)
+loglikelihood = apply(logliketemp,2,sum,na.rm=TRUE)
+
+par(mfrow=c(1,1))
+plot(logr,loglikelihood,type='b')
+
+#### Consider the synthetic likelihood, and some summaries, plot wrt r
+
+summaryfun = function(output){
+  morethan10 = sum(output$y>10,na.rm=T)
+  medi = median(output$y,na.rm=T)
+  max = max(output$y,na.rm=T)
+  q3  = quantile(output$y,p=.75,na.rm=T)
+  meanover1 = mean(output$y[output$y>1],na.rm=T)
+  outputsum = c(morethan10,medi,max,q3,meanover1)
+  names(outputsum) = c("morethan10","medi","max","q3","meanover1")
+  return(outputsum)
+}
+
+# Make a wrapper for the summary functions
+
+applysummaries = function(output){
+  if(is.list(output)){
+    out = lapply(output,summaryfun)
+  }else{
+    out = apply(output,1,summaryfun)
+  }
+  return(out)
+}
+
+s = summaryfun(data)
+
+# Number of data sets to consider for the synthetic log likelihood
+
+k=200
+
+synthloglike = function(k,theta,N0,timestep=50,s){
+  oout = lapply(rep(list(N0),k),ricker,theta=theta,timestep = timestep)
+  summ = matrix(unlist(applysummaries(oout)),ncol=5,byrow=T)
+  muhat = apply(summ,2,mean)
+  Sigmahat = cov(summ)
+  return( log(dmvnorm(s,mean=muhat,sigma=Sigmahat)  ))
+}
+
+logr=seq(3,6,length=100)
+sloglike=rep(NA,length(logr))
+
+a = 1
+
+for(index in a:length(logr)){
+  theta[1]=exp(logr[index])
+  sloglike[index] = synthloglike(k,theta,N0,timestep=50,s)
+}
+
+sim_synth <- matrix(NA,ncol=1,nrow=1000)
+for(i in 1:1000)
+{
+	sim_synth[i] <- sample(logr,size=1,prob=exp(sloglike))
+}
+sim_synth = data.frame(sim_synth)
+class(sim_synth)
+)
+
+# Load posterior sample from standard ABC
+
+ricker_ABC <- read.csv("ricker_standardABC.csv",header=F)
+head(ricker_ABC)
+
+# Load posterior sample from BOLFI
+
+ricker_bolfi <- read.csv("ricker_BOLFI.csv",header=F)
+
+library(ggplot2)
+
+colnames(sim_synth)[1] = "V1"
+sim_synth$method = "synth"
+ricker_ABC$method = "ABC"
+ricker_bolfi$method = "BOLFI"
+
+post_ricker = rbind(sim_synth,ricker_ABC[,c(1,4)],ricker_bolfi[1:1000,c(1,4)])
+colnames(post_ricker)[1] = "logr"
+
+ggplot(post_ricker, aes(logr,fill=method)) +
+	geom_histogram(alpha=0.5,aes(y=..density..)) + 
+	geom_vline(xintercept=3.8) + 
+	labs(y = expression(pi[y](theta)))
+	
